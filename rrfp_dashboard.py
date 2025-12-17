@@ -191,22 +191,25 @@ else:
 
         st.caption("Подсчёт: среднее значение по каждому аспекту среди ответов «Да» в выбранной фильтрации.")
 
-st.header("3.1 Самые недовольные (по матрице)")
+st.header("3.1 Ответы с самыми низкими оценками (по матрице)")
 
 if "avg_score" not in visited.columns or visited["avg_score"].isna().all():
     st.info("Пока нельзя посчитать среднюю оценку: нет данных матрицы.")
 else:
+    # сколько показывать
+    top_n = st.slider("Сколько ответов показать", 5, 50, 15)
+
+    unhappy_table = visited.sort_values("avg_score", ascending=True).head(top_n)
+
+    st.write(f"Показано ответов: **{len(unhappy_table)}** (самые низкие avg_score)")
     show_cols = ["avg_score"]
     for c in ["Дата и время", "Актуальность тем", "Что улучшить", "Доп. предложения", "Имя", "Email"]:
         if c in visited.columns:
             show_cols.append(c)
 
-    unhappy_table = visited.sort_values("avg_score", ascending=True)
-
-    st.write(f"Показано ответов: **{len(unhappy_table)}**")
     st.dataframe(unhappy_table[show_cols], use_container_width=True)
+    st.caption("avg_score — средняя оценка по аспектам матрицы. Ниже = хуже.")
 
-    st.caption("avg_score — средняя оценка по всем аспектам матрицы (чем ниже, тем недовольнее).")
 
 
 # -------------------- 4. REASONS (NOT ATTENDED) --------------------
