@@ -4,18 +4,17 @@ import matplotlib.pyplot as plt
 from wordcloud import WordCloud
 from collections import Counter
 
-# ======== ЗАГРУЗКА ДАННЫХ ========
-st.title("📊 Дашборд по опросу участников конференции РРФП")
+SHEET_CSV_URL = st.secrets.get("https://docs.google.com/spreadsheets/d/e/2PACX-1vQq_261p3aySQKGkiPnG5i6AhOJ0ehdepTe5NypwfdoYamoWZj--Y2Ai-kHhywhFbF6UJT19O0gGzi4/pubhtml?gid=0&single=true", "")  # возьмём из Secrets
 
-uploaded = st.file_uploader("Загрузите CSV-файл с результатами опроса", type=["csv", "xlsx"])
+@st.cache_data(ttl=300)  # обновление данных раз в 5 минут
+def load_data_from_gsheets(csv_url: str) -> pd.DataFrame:
+    return pd.read_csv(csv_url)
+    
+if not SHEET_CSV_URL:
+    st.error("Не задан SHEET_CSV_URL в Secrets Streamlit Cloud.")
+    st.stop()
 
-if uploaded:
-    if uploaded.name.endswith(".xlsx"):
-        df = pd.read_excel(uploaded)
-    else:
-        df = pd.read_csv(uploaded, encoding="utf-8-sig")
-
-    st.success(f"Файл загружен! Строк: {len(df)}")
+df = load_data_from_gsheets(SHEET_CSV_URL)
 
     # Преобразуем заголовки
     df.columns = [c.strip() for c in df.columns]
