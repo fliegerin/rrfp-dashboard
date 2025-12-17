@@ -216,12 +216,76 @@ suggestions_col = "Доп. предложения"
 if not safe_col(df_filtered, suggestions_col):
     st.warning("Нет колонки «Доп. предложения» в данных.")
 else:
-    suggestions_text = " ".join(df_filtered[suggestions_col].dropna().astype(str))
-    if not suggestions_text.strip():
-        st.info("Пока нет текста для дополнительных предложений.")
+    # соберём непустые ответы
+    sugg = df_filtered[suggestions_col].dropna().astype(str)
+    sugg = sugg[sugg.str.strip().astype(bool)]
+
+    if sugg.empty:
+        st.info("Пока нет дополнительных предложений.")
     else:
-        wc2 = WordCloud(width=1000, height=450, background_color="white").generate(suggestions_text)
-        fig2, ax2 = plt.subplots(figsize=(10, 4.5))
-        ax2.imshow(wc2, interpolation="bilinear")
-        ax2.axis("off")
-        st.pyplot(fig2, clear_figure=True)
+        st.caption("Ниже — сводка по словам/темам и полный список предложений. Word cloud для этого поля не используем, чтобы не терять смысл.")
+
+        # 6.1 — быстрые “ключевые слова” (частотность, без сложной лингвистики)
+        st.subheader("Часто встречающиеся слова (черновая сводка)")
+        text = " ".join(sugg.tolist()).lower()
+
+        # минимальная чистка
+        for ch in ",.!?;:\"«»()[]{}…—–/\\'":
+            text = text.replace(ch, " ")
+
+        tokens = [w for w in text.split() if len(w) > 4]
+        # можно убрать самые “бесполезные” слова (можешь расширять)
+        stop = set(["очень", "нужно", "сделать", "чтобы", "который", "будет", "можно", "пожалуйста", "спасибо", "вообще", "просто"])
+        tokens = [w for w in tokens if w not in stop]
+
+        top = Counter(tokens).most_common(20)
+        st.dataframe(pd.DataFrame(top, columns=["Слово", "Частота"]), use_container_width=True)
+
+        # 6.2 — “темы” по ключевым словам (простая группировка)
+        st.subheader("Быстрая группировка по темам (эвристика)")
+        categories = {
+            "Организация / логистика": ["логист", "регистрац", "расписан", "тайминг", "площадк", "проход", "трансфер", "навигац"],
+            "Коммуникации / рассылки": ["письм", "приглаш", "коммуникац", "анонс", "сайт", "telegram", "телеграм", "напомин"],
+            "Программа / контент": ["тема", "трек", "секц", "доклад", "контент", "пленар", "воркшоп", "кругл", "кейсы"],
+            "Нетворкинг": ["нетворк", "общен", "знакомств", "встреч", "комьюнит"],
+            "Онлайн / трансляции": ["онлайн", "трансляц", "запись", "видео", "стрим"],
+        }
+
+        cat_counts = {k: 0 for k in categories}
+        other = 0
+
+        for s in sugg.tolist():
+            s_low = s.lower()
+            hit = False
+            for cat, keys in categories.items():
+                if any(k in s_low for k in keys):
+                    cat_counts[cat] += 1
+                    hit = True
+            if not hit:
+                other += 1
+
+        cat_counts["Другое / без ключевых слов"] = other
+        cat_series = pd.Series(cat_counts).sort_values(ascending=False)
+
+        barh_pretty(cat_series, "К каким темам чаще относятся предложения", xlabel="Количество предложений", wrap=30)
+
+        # 6.3 — сами предложения (читаемо, с поиском)
+        st.subheader("Все предложения (как есть)")
+        query = st.text_input("Поиск по предложениям", placeholder="Например: регистрация, онлайн, трансляция, нетворкинг...")
+
+        show = sugg
+        if query and query.strip():
+            q = query.strip().lower()
+            show = show[show.str.lower().str.contains(q)]
+
+        st.write(f"Показано предложений: **{len(show)}** из **{len(sugg)}**")
+        st.dataframe(pd.DataFrame({"Предложение": show.tolist()}), use_container_width=True)
+
+        # бонус: показать 10 последних (если есть дата)
+        if safe_col(df_filtered, "Дата и время"):
+            st.subheader("Последние полученные предложения")
+            tmp = df_filtered[[ "Дата и время", suggestions_col ]].dropna()
+            tmp = tmp[tmp[suggestions_col].astype(str).str.strip().astype(bool)]
+            tmp["Дата и время"] = pd.to_datetime(tmp["Дата и время"], errors="coerce", dayfirst=True)
+            tmp = tmp.sort_values("Дата и время", ascending=False).head(10)
+            st.dataframe(tmp.rename(columns={suggestions_col: "Предложение"}), use_container_width=True)
