@@ -104,6 +104,10 @@ attend_filter = st.sidebar.multiselect(
     sorted(df["Посетил / Не посетил"].dropna().unique().tolist()),
     default=sorted(df["Посетил / Не посетил"].dropna().unique().tolist())
 )
+st.sidebar.subheader("Фильтр «самые недовольные»")
+
+only_unhappy = st.sidebar.checkbox("Показать только недовольных (по матрице)", value=False)
+unhappy_threshold = st.sidebar.slider("Порог средней оценки", 1.0, 5.0, 3.0, 0.1)
 
 df_filtered = df[df["Посетил / Не посетил"].isin(attend_filter)].copy()
 
@@ -122,6 +126,26 @@ barh_pretty(
 
 visited = df_filtered[df_filtered["Посетил / Не посетил"] == "Да"].copy()
 not_attended = df_filtered[df_filtered["Посетил / Не посетил"] == "Нет"].copy()
+
+# --- расчёт среднего балла по матрице для "Да" ---
+matrix_col = "Матрица оценок (если посещал)"
+
+visited_with_score = visited.copy()
+visited_with_score["avg_score"] = pd.NA  # на случай пустого
+
+if matrix_col in visited_with_score.columns:
+    matrix_df = parse_matrix_series(visited_with_score[matrix_col])
+    if matrix_df.shape[1] > 0:
+        visited_with_score["avg_score"] = matrix_df.mean(axis=1)
+
+# применяем фильтр "недовольных" только к посетившим (потому что матрица только у них)
+if only_unhappy:
+    visited_with_score = visited_with_score[
+        pd.to_numeric(visited_with_score["avg_score"], errors="coerce") <= unhappy_threshold
+    ].copy()
+
+# обновим visited после фильтра (чтобы весь дашборд подстроился)
+visited = visited_with_score.copy()
 
 # -------------------- 2. USEFUL FORMATS (VISITED) --------------------
 st.header("2. Полезные форматы (если посещали)")
@@ -167,6 +191,24 @@ else:
 
         st.caption("Подсчёт: среднее значение по каждому аспекту среди ответов «Да» в выбранной фильтрации.")
 
+st.header("3.1 Самые недовольные (по матрице)")
+
+if "avg_score" not in visited.columns or visited["avg_score"].isna().all():
+    st.info("Пока нельзя посчитать среднюю оценку: нет данных матрицы.")
+else:
+    show_cols = ["avg_score"]
+    for c in ["Дата и время", "Актуальность тем", "Что улучшить", "Доп. предложения", "Имя", "Email"]:
+        if c in visited.columns:
+            show_cols.append(c)
+
+    unhappy_table = visited.sort_values("avg_score", ascending=True)
+
+    st.write(f"Показано ответов: **{len(unhappy_table)}**")
+    st.dataframe(unhappy_table[show_cols], use_container_width=True)
+
+    st.caption("avg_score — средняя оценка по всем аспектам матрицы (чем ниже, тем недовольнее).")
+
+
 # -------------------- 4. REASONS (NOT ATTENDED) --------------------
 st.header("4. Причины неучастия (если не посещали)")
 
@@ -204,10 +246,41 @@ else:
         ax.axis("off")
         st.pyplot(fig, clear_figure=True)
 
-        st.subheader("Ключевые слова (по частоте, грубо)")
-        words = [w for w in themes_text.lower().split() if len(w) > 3]
-        freq = Counter(words).most_common(20)
-        st.write(pd.DataFrame(freq, columns=["Слово", "Частота"]))
+                # Вместо "ключевых слов" — полный список предложений по темам 2026
+        st.subheader("Все предложения по темам 2026 (как есть)")
+
+        themes_series = df_filtered[themes_col].dropna().astype(str)
+        themes_series = themes_series[themes_series.str.strip().astype(bool)]
+
+        q2 = st.text_input(
+            "Поиск по темам 2026",
+            placeholder="Например: ИИ, устойчивое развитие, регионы, ESG, кадры, образование..."
+        )
+
+        show2 = themes_series
+        if q2 and q2.strip():
+            qq = q2.strip().lower()
+            show2 = show2[show2.str.lower().str.contains(qq)]
+
+        st.write(f"Показано предложений: **{len(show2)}** из **{len(themes_series)}**")
+
+        st.dataframe(
+            pd.DataFrame({"Предложение по темам 2026": show2.tolist()}),
+            use_container_width=True
+        )
+
+        # Если есть дата — покажем последние 10 предложений по темам
+        if safe_col(df_filtered, "Дата и время"):
+            st.subheader("Последние полученные предложения по темам 2026")
+            tmp2 = df_filtered[["Дата и время", themes_col]].dropna()
+            tmp2 = tmp2[tmp2[themes_col].astype(str).str.strip().astype(bool)]
+            tmp2["Дата и время"] = pd.to_datetime(tmp2["Дата и время"], errors="coerce", dayfirst=True)
+            tmp2 = tmp2.sort_values("Дата и время", ascending=False).head(10)
+            st.dataframe(
+                tmp2.rename(columns={themes_col: "Предложение по темам 2026"}),
+                use_container_width=True
+            )
+
 
 # -------------------- 6. EXTRA SUGGESTIONS --------------------
 st.header("6. Дополнительные предложения")
@@ -223,7 +296,7 @@ else:
     if sugg.empty:
         st.info("Пока нет дополнительных предложений.")
     else:
-        st.caption("Ниже — сводка по словам/темам и полный список предложений. Word cloud для этого поля не используем, чтобы не терять смысл.")
+        st.caption("Ниже — сводка по словам/темам и полный список предложений")
 
         # 6.1 — быстрые “ключевые слова” (частотность, без сложной лингвистики)
         st.subheader("Часто встречающиеся слова (черновая сводка)")
