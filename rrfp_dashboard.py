@@ -5,6 +5,11 @@ from wordcloud import WordCloud
 from collections import Counter
 from streamlit_autorefresh import st_autorefresh
 
+st.set_page_config(page_title="RRFP — Dashboard", layout="wide")
+
+st.image("assets/logo.png", width=220)
+st.title("Дашборд по опросу участников конференции")
+
 st_autorefresh(interval=300 * 1000, key="datarefresh")  # каждые 5 минут
 
 SHEET_CSV_URL = st.secrets.get("https://docs.google.com/spreadsheets/d/e/2PACX-1vQq_261p3aySQKGkiPnG5i6AhOJ0ehdepTe5NypwfdoYamoWZj--Y2Ai-kHhywhFbF6UJT19O0gGzi4/pubhtml?gid=0&single=true", "")  # возьмём из Secrets
