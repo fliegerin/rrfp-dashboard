@@ -6,19 +6,23 @@ from collections import Counter
 from streamlit_autorefresh import st_autorefresh
 import textwrap
 
+# -------------------- PAGE SETUP --------------------
 st.set_page_config(page_title="RRFP — Dashboard", layout="wide")
 st.image("assets/logo.png", width=220)
 st.title("Дашборд по опросу участников конференции")
 
-st_autorefresh(interval=300 * 1000, key="datarefresh")
+# автообновление страницы
+st_autorefresh(interval=300 * 1000, key="datarefresh")  # каждые 5 минут
 
+# -------------------- SETTINGS --------------------
 SHEET_CSV_URL = st.secrets.get("SHEET_CSV_URL", "")
 
+# -------------------- HELPERS --------------------
 @st.cache_data(ttl=300)
 def load_data_from_gsheets(csv_url: str) -> pd.DataFrame:
-    return pd.read_csv(csv_url)
+    return pd.read_csv(csv_url, encoding="utf-8-sig")
 
-def split_multi(series):
+def split_multi(series: pd.Series) -> pd.Series:
     vals = []
     for v in series.dropna():
         vals.extend([x.strip() for x in str(v).split(",")])
@@ -29,6 +33,7 @@ def barh_pretty(counts: pd.Series, title: str, xlabel: str = "Количеств
         st.info("Недостаточно данных для графика.")
         return
 
+    # если это числовой Series (например, mean_scores), index может быть не строкой
     labels = [textwrap.fill(str(x), wrap) for x in counts.index.tolist()]
     values = counts.values.tolist()
 
@@ -41,11 +46,44 @@ def barh_pretty(counts: pd.Series, title: str, xlabel: str = "Количеств
     max_v = max(values) if values else 0
     pad = max(0.02 * max_v, 0.1)
     for i, v in enumerate(values):
-        ax.text(v + pad, i, str(v), va="center", fontsize=10)
+        ax.text(v + pad, i, str(round(v, 2)) if isinstance(v, (int, float)) else str(v),
+                va="center", fontsize=10)
 
     fig.tight_layout()
     st.pyplot(fig, clear_figure=True)
 
+def parse_matrix_series(matrix_series: pd.Series) -> pd.DataFrame:
+    """
+    Парсим колонку матрицы вида:
+    'Организация ...: 5 | Площадки ...: 4 | ...'
+    Возвращаем DataFrame с отдельными колонками-аспектами.
+    """
+    rows = []
+    for raw in matrix_series.fillna("").astype(str):
+        if not raw.strip():
+            rows.append({})
+            continue
+
+        parts = [p.strip() for p in raw.split("|")]
+        d = {}
+        for part in parts:
+            if ":" not in part:
+                continue
+            name, score = part.rsplit(":", 1)   # важно: rsplit, чтобы не ломалось от двоеточий в тексте
+            name = name.strip()
+            score = score.strip()
+            try:
+                d[name] = float(score.replace(",", "."))
+            except ValueError:
+                continue
+        rows.append(d)
+
+    return pd.DataFrame(rows)
+
+def safe_col(df: pd.DataFrame, col: str) -> bool:
+    return col in df.columns
+
+# -------------------- LOAD --------------------
 if not SHEET_CSV_URL:
     st.error("Не задан SHEET_CSV_URL в Secrets Streamlit Cloud.")
     st.stop()
@@ -53,44 +91,48 @@ if not SHEET_CSV_URL:
 df = load_data_from_gsheets(SHEET_CSV_URL)
 df.columns = [c.strip() for c in df.columns]
 
+# базовая проверка минимально нужной колонки
+if "Посетил / Не посетил" not in df.columns:
+    st.error("В данных нет колонки «Посетил / Не посетил». Проверь структуру таблицы.")
+    st.stop()
 
-# ======== ФИЛЬТРЫ ========
+# -------------------- FILTERS --------------------
 st.sidebar.header("Фильтры")
+
 attend_filter = st.sidebar.multiselect(
     "Посещение конференции",
-    df["Посетил / Не посетил"].unique().tolist(),
-    default=df["Посетил / Не посетил"].unique().tolist()
+    sorted(df["Посетил / Не посетил"].dropna().unique().tolist()),
+    default=sorted(df["Посетил / Не посетил"].dropna().unique().tolist())
 )
 
-df_filtered = df[df["Посетил / Не посетил"].isin(attend_filter)]
+df_filtered = df[df["Посетил / Не посетил"].isin(attend_filter)].copy()
 
-# ======== 1. ОБЩАЯ СТАТИСТИКА ========
+# -------------------- 1. OVERVIEW --------------------
 st.header("1. Общая статистика")
 
 total = len(df_filtered)
 st.write(f"Всего ответов после фильтрации: **{total}**")
 
-st.write("### Посетили конференцию:")
 barh_pretty(
-df_filtered["Посетил / Не посетил"].value_counts(),
-"Посещали ли конференцию в 2025 году",
-xlabel="Ответов",
-wrap=18
+    df_filtered["Посетил / Не посетил"].value_counts(),
+    "Посещали ли конференцию в 2025 году",
+    xlabel="Ответов",
+    wrap=18
 )
 
-visited = df_filtered[df_filtered["Посетил / Не посетил"] == "Да"]
+visited = df_filtered[df_filtered["Посетил / Не посетил"] == "Да"].copy()
+not_attended = df_filtered[df_filtered["Посетил / Не посетил"] == "Нет"].copy()
 
-# ======== 2. ПОЛЕЗНЫЕ ФОРМАТЫ ========
-st.header("2. Полезные форматы")
+# -------------------- 2. USEFUL FORMATS (VISITED) --------------------
+st.header("2. Полезные форматы (если посещали)")
 
-visited = df_filtered[df_filtered["Посетил / Не посетил"] == "Да"]
-
-if "Полезные форматы (если посещал)" not in df_filtered.columns:
+useful_col = "Полезные форматы (если посещал)"
+if not safe_col(df_filtered, useful_col):
     st.warning("Нет колонки «Полезные форматы (если посещал)» в данных.")
 elif visited.empty:
     st.info("Пока нет ответов от посетивших конференцию (или фильтр их исключил).")
 else:
-    formats = split_multi(visited["Полезные форматы (если посещал)"])
+    formats = split_multi(visited[useful_col])
     barh_pretty(
         formats.value_counts(),
         "Какие форматы были наиболее полезны (по ответам посетивших)",
@@ -98,54 +140,88 @@ else:
         wrap=28
     )
 
-
-# ======== 3. МАТРИЦА ОЦЕНОК ========
+# -------------------- 3. MATRIX --------------------
 st.header("3. Оценка конференции (матрица)")
 
-mean_scores = df_filtered[aspects].mean().sort_values(ascending=True)
-barh_pretty(
-    mean_scores,
-    "Средняя оценка по аспектам (1–5)",
-    xlabel="Средний балл",
-    wrap=35
-)
+matrix_col = "Матрица оценок (если посещал)"
+if not safe_col(df_filtered, matrix_col):
+    st.warning("Нет колонки «Матрица оценок (если посещал)» в данных.")
+elif visited.empty:
+    st.info("Матрица есть, но сейчас нет выбранных ответов от посетивших конференцию.")
+else:
+    matrix_df = parse_matrix_series(visited[matrix_col])
 
+    # если аспекты не нашлись (например, пусто)
+    if matrix_df.shape[1] == 0:
+        st.info("Матрица оценок пока пустая или не распознана.")
+    else:
+        # средние значения по аспектам
+        mean_scores = matrix_df.mean().sort_values(ascending=True)
 
-# ======== 4. ПРИЧИНЫ НЕУЧАСТИЯ ========
-st.header("4. Причины неучастия")
+        barh_pretty(
+            mean_scores,
+            "Средняя оценка по аспектам (1–5)",
+            xlabel="Средний балл",
+            wrap=42
+        )
 
-reasons = split_multi(not_attended["Причины неучастия (если не посещал)"])
-barh_pretty(
-    reasons.value_counts(),
-    "Причины неучастия в конференции 2025",
-    xlabel="Упоминаний",
-    wrap=38
-)
+        st.caption("Подсчёт: среднее значение по каждому аспекту среди ответов «Да» в выбранной фильтрации.")
 
-# ======== 5. ТЕМЫ 2026 (WordCloud) ========
+# -------------------- 4. REASONS (NOT ATTENDED) --------------------
+st.header("4. Причины неучастия (если не посещали)")
+
+reasons_col = "Причины неучастия (если не посещал)"
+if not safe_col(df_filtered, reasons_col):
+    st.warning("Нет колонки «Причины неучастия (если не посещал)» в данных.")
+elif not_attended.empty:
+    st.info("Пока нет ответов от тех, кто не посещал конференцию (или фильтр их исключил).")
+else:
+    reasons = split_multi(not_attended[reasons_col])
+    if reasons.empty:
+        st.info("Причины неучастия не заполнены.")
+    else:
+        barh_pretty(
+            reasons.value_counts(),
+            "Причины неучастия в конференции 2025",
+            xlabel="Упоминаний",
+            wrap=45
+        )
+
+# -------------------- 5. THEMES 2026 --------------------
 st.header("5. Предлагаемые темы 2026")
 
-themes = " ".join(df_filtered["Темы 2026"].dropna().astype(str))
+themes_col = "Темы 2026"
+if not safe_col(df_filtered, themes_col):
+    st.warning("Нет колонки «Темы 2026» в данных.")
+else:
+    themes_text = " ".join(df_filtered[themes_col].dropna().astype(str))
+    if not themes_text.strip():
+        st.info("Пока нет текста для тем 2026.")
+    else:
+        wc = WordCloud(width=1000, height=450, background_color="white").generate(themes_text)
+        fig, ax = plt.subplots(figsize=(10, 4.5))
+        ax.imshow(wc, interpolation="bilinear")
+        ax.axis("off")
+        st.pyplot(fig, clear_figure=True)
 
-if themes.strip():
-    wc = WordCloud(width=800, height=400, background_color="white").generate(themes)
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.imshow(wc, interpolation="bilinear")
-    ax.axis("off")
-    st.pyplot(fig)
+        st.subheader("Ключевые слова (по частоте, грубо)")
+        words = [w for w in themes_text.lower().split() if len(w) > 3]
+        freq = Counter(words).most_common(20)
+        st.write(pd.DataFrame(freq, columns=["Слово", "Частота"]))
 
-    st.subheader("Ключевые слова")
-    words = [w for w in themes.lower().split() if len(w) > 3]
-    freq = Counter(words).most_common(20)
-    st.write(freq)
-
-# ======== 6. ДОПОЛНИТЕЛЬНЫЕ ПРЕДЛОЖЕНИЯ ========
+# -------------------- 6. EXTRA SUGGESTIONS --------------------
 st.header("6. Дополнительные предложения")
 
-suggestions = " ".join(df_filtered["Доп. предложения"].dropna().astype(str))
-if suggestions.strip():
-    wc2 = WordCloud(width=800, height=400, background_color="white").generate(suggestions)
-    fig2, ax2 = plt.subplots(figsize=(10, 5))
-    ax2.imshow(wc2, interpolation="bilinear")
-    ax2.axis("off")
-    st.pyplot(fig2)
+suggestions_col = "Доп. предложения"
+if not safe_col(df_filtered, suggestions_col):
+    st.warning("Нет колонки «Доп. предложения» в данных.")
+else:
+    suggestions_text = " ".join(df_filtered[suggestions_col].dropna().astype(str))
+    if not suggestions_text.strip():
+        st.info("Пока нет текста для дополнительных предложений.")
+    else:
+        wc2 = WordCloud(width=1000, height=450, background_color="white").generate(suggestions_text)
+        fig2, ax2 = plt.subplots(figsize=(10, 4.5))
+        ax2.imshow(wc2, interpolation="bilinear")
+        ax2.axis("off")
+        st.pyplot(fig2, clear_figure=True)
