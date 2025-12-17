@@ -78,17 +78,25 @@ xlabel="Ответов",
 wrap=18
 )
 
+visited = df_filtered[df_filtered["Посетил / Не посетил"] == "Да"]
 
 # ======== 2. ПОЛЕЗНЫЕ ФОРМАТЫ ========
 st.header("2. Полезные форматы")
 
-formats = split_multi(visited["Полезные форматы (если посещал)"])
-barh_pretty(
-    formats.value_counts(),
-    "Какие форматы были наиболее полезны (по ответам посетивших)",
-    xlabel="Упоминаний",
-    wrap=28
-)
+visited = df_filtered[df_filtered["Посетил / Не посетил"] == "Да"]
+
+if "Полезные форматы (если посещал)" not in df_filtered.columns:
+    st.warning("Нет колонки «Полезные форматы (если посещал)» в данных.")
+elif visited.empty:
+    st.info("Пока нет ответов от посетивших конференцию (или фильтр их исключил).")
+else:
+    formats = split_multi(visited["Полезные форматы (если посещал)"])
+    barh_pretty(
+        formats.value_counts(),
+        "Какие форматы были наиболее полезны (по ответам посетивших)",
+        xlabel="Упоминаний",
+        wrap=28
+    )
 
 
 # ======== 3. МАТРИЦА ОЦЕНОК ========
