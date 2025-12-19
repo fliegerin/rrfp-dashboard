@@ -78,7 +78,7 @@ def parse_matrix_series(matrix_series: pd.Series) -> pd.DataFrame:
                 continue
         rows.append(d)
 
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, index=matrix_series.index)
 
 def safe_col(df: pd.DataFrame, col: str) -> bool:
     return col in df.columns
